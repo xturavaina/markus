@@ -1,66 +1,60 @@
 #!/usr/bin/env bash
-set -o errexit
+set -euo pipefail
+
 if [ -f "../env/magento.env" ]; then
-    source "../env/magento.env"
+  # shellcheck disable=SC1091
+  source "../env/magento.env"
 else
-    echo "Warning: magento.env file not found."
+  echo "Warning: magento.env file not found."
 fi
 
 MEM_BYTES=$(docker info -f '{{.MemTotal}}')
 MEM_MB=$(( MEM_BYTES / 1000000 ))
-# When Docker Desktop is set to 6GB in the GUI, it is reported as 6227 MB
-(( MEM_MB < 6227 )) && echo "There must be at least 6GB of RAM allocated to Docker in order to continue." && exit
+(( MEM_MB < 6227 )) && echo "There must be at least 6GB of RAM allocated to Docker in order to continue." && exit 1
 
 DOMAIN=${1:-magento.test}
 
 bin/stop
-
 bin/start --no-dev
-[ $? != 0 ] && echo "Failed to start Docker services" && exit
+[ $? != 0 ] && echo "Failed to start Docker services" && exit 1
 
-bin/clinotty chmod u+x bin/magento
-rm -rf src && mkdir src
+# ❗️només si existeix
+bin/clinotty 'test -f bin/magento && chmod u+x bin/magento || { echo "bin/magento not found; did create-project run?"; exit 1; }'
 
 echo "Adding Magento modules to Composer allow-plugins directive..."
 bin/clinotty composer config --no-plugins allow-plugins.magento/magento-composer-installer true
 bin/clinotty composer config --no-plugins allow-plugins.magento/inventory-composer-installer true
 bin/clinotty composer config --no-plugins allow-plugins.laminas/laminas-dependency-plugin true
 
-echo "Running, Magento setup:install..."
+echo "Running Magento setup:install..."
 bin/setup-install "${DOMAIN}"
 
-echo "Copying files from container to host after install..."
-bin/copyfromcontainer --all
+# ❌ amb bind mount NO cal copiar del contenidor
+# bin/copyfromcontainer --all
 
-echo "Forcing deploy of static content to speed up initial requests..."
+echo "Forcing deploy of static content..."
 bin/clinotty bin/magento setup:static-content:deploy -f
 
-echo "Re-indexing with Elasticsearch..."
+echo "Re-indexing..."
 bin/clinotty bin/magento indexer:reindex
 
-echo "Setting basic URL and generating SSL certificate..."
-bin/setup-domain "${DOMAIN}"
+# echo "Setting base URL and SSL..."
+# bin/setup-domain "${DOMAIN}"
 
 echo "Fixing owner and permissions..."
 bin/fixowns
 bin/fixperms
 
-echo "Clearing the cache to apply updates..."
+echo "Flushing cache..."
 bin/clinotty bin/magento cache:flush
 
-echo "Installing cron, run 'bin/cron start' to enable..."
+echo "Installing cron (disabled by default)..."
 bin/clinotty bin/magento cron:install
 
-echo "Turning on developer mode..."
+echo "Developer mode..."
 bin/clinotty bin/magento deploy:mode:set developer
 
-cp -r .vscode src/
+cp -r .vscode src/ || true
 
-echo "Docker development environment setup complete."
-echo "You may now access your Magento instance at https://${DOMAIN}/"
-
-echo "You may now access your Magento backend instance at https://${DOMAIN}/admin/"
-
-echo "Use the following default credentials to log in:"
-echo "Username: $MAGENTO_ADMIN_USER"
-echo "Password: $MAGENTO_ADMIN_PASSWORD"
+echo "Done. Frontend: https://${DOMAIN}/  Admin: https://${DOMAIN}/admin/"
+echo "User: ${MAGENTO_ADMIN_USER:-admin}  Pass: ${MAGENTO_ADMIN_PASSWORD:-admin123}"

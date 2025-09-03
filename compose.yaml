@@ -1,150 +1,172 @@
-## Mark Shust's Docker Configuration for Magento
-## (https://github.com/markshust/docker-magento)
-##
-## Version 52.0.1
-
-## To use SSH, see https://github.com/markshust/docker-magento#ssh
-## Linux users, see https://github.com/markshust/docker-magento#linux
-
-## If you changed the default Docker network, you may need to replace
-## 172.17.0.1 in this file with the result of:
-## docker network inspect bridge --format='{{(index .IPAM.Config 0).Gateway}}'
-
 services:
   app:
-    image: markoshust/magento-nginx:1.24-0
+    image: nacento/webume:0.3-experimental
+    container_name: nginx-alpine
     ports:
-      - "80:8000"
-      - "443:8443"
-    volumes: &appvolumes
+      - "8886:8886"
+      - "80"
+    volumes:
+      - appdata:/var/www
+      - ./src:/var/www/html:cached
       - ~/.composer:/var/www/.composer:cached
       - ~/.ssh/id_rsa:/var/www/.ssh/id_rsa:cached
       - ~/.ssh/known_hosts:/var/www/.ssh/known_hosts:cached
-      - appdata:/var/www/html
       - sockdata:/sock
-      - ssldata:/etc/nginx/certs
-    #extra_hosts: &appextrahosts
-      ## Selenium support, replace "magento.test" with URL of your site
-      #- "magento.test:172.17.0.1"
-      ## Linux, uncomment for Xdebug capabilities:
-      #- "host.docker.internal:host-gateway"
+      # - ssldata:/etc/nginx/certs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - TZ=Europe/Andorra
+    depends_on:
+      - phpfpm
 
   phpfpm:
     image: markoshust/magento-php:8.3-fpm-4
-    volumes: *appvolumes
+    container_name: php-fpm
+    ports:
+      - "9000"
     env_file: env/phpfpm.env
-    #extra_hosts: *appextrahosts
+    volumes:
+      - appdata:/var/www
+      - ./src:/var/www/html:cached
+      - ~/.composer:/var/www/.composer:cached
+      - ~/.ssh/id_rsa:/var/www/.ssh/id_rsa:cached
+      - ~/.ssh/known_hosts:/var/www/.ssh/known_hosts:cached
+      - sockdata:/sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - TZ=Europe/Andorra
+    depends_on:
+      - db
+      - redis
+      - opensearch
+      - rabbitmq
 
   db:
     image: mariadb:11.4
+    container_name: mariadb
     command:
-      --max_allowed_packet=64M
-      --optimizer_use_condition_selectivity=1
-      --optimizer_switch="rowid_filter=off"
-      --log_bin_trust_function_creators=1
+      - --max_allowed_packet=64M
+      - --optimizer_use_condition_selectivity=1
+      - --optimizer_switch=rowid_filter=off
+      - --log_bin_trust_function_creators=1
     ports:
       - "3306:3306"
     env_file: env/db.env
+    environment:
+      - TZ=Europe/Andorra
     volumes:
       - dbdata:/var/lib/mysql
 
-  ## If you wish to use MySQL, comment out the mariadb db image above and
-  ## uncomment this block.
-  #db:
-  #  image: mysql:8.4
-  #  command:
-  #    --max_allowed_packet=64M
-  #    --log_bin_trust_function_creators=1
-  #  ports:
-  #    - "3306:3306"
-  #  env_file: env/db.env
-  #  volumes:
-  #    - dbdata:/var/lib/mysql
+
+  consumer:
+    image: nacento/magento-consumers:0.1-experimental
+    container_name: supervisord
+    ports:
+      - "9000"
+    depends_on:
+      - phpfpm
+      - rabbitmq
+      - opensearch
+    # working_dir: /var/www/html
+    volumes:
+      - appdata:/var/www
+      - ./mountConf/supervisor/conf.d/magento-consumers.conf:/etc/supervisor/conf.d/magento-consumers.conf:cached
+      # - ./mountConf/supervisor/supervisord.conf:/etc/supervisor/supervisord.conf:cached
+      - ./src:/var/www/html:cached
+      - ~/.composer:/var/www/.composer:cached
+      - ~/.ssh/id_rsa:/var/www/.ssh/id_rsa:cached
+      - ~/.ssh/known_hosts:/var/www/.ssh/known_hosts:cached
+      - sockdata:/sock
+    env_file: env/phpfpm.env
+    environment:
+      - TZ=Europe/Andorra
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      # - XDEBUG_MODE=debug
+    # extra_hosts: *appextrahosts
+    # configs:
+    #   - source: php_xdebug_ini
+    #     target: /usr/local/etc/php/conf.d/99-xdebug.ini
+    #     mode: 0444
+
+
 
   redis:
     image: valkey/valkey:8.1-alpine
+    container_name: valkey
     ports:
       - "6379:6379"
-
-  ## If you wish to use Redis, comment out the redis image above and
-  ## uncomment this block.
-  #redis:
-  #  image: redis:7.2-alpine
-  #  ports:
-  #    - "6379:6379"
+    volumes:
+      - redisdata:/data
+    environment:
+      - TZ=Europe/Andorra
 
   opensearch:
     image: markoshust/magento-opensearch:2.12-0
+    container_name: opensearch
     ports:
       - "9200:9200"
       - "9300:9300"
+      - "9600"
+      - "9650"
     env_file: env/opensearch.env
     environment:
-      - "discovery.type=single-node"
-      ## Avoid test failures due to small disks
-      ## More info at https://github.com/markshust/docker-magento/issues/488
-      - "cluster.routing.allocation.disk.threshold_enabled=false"
-      - "index.blocks.read_only_allow_delete"
-      ## Uncomment to set custom heap size to avoid memory errors
-      #- "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
-      ## Uncomment to increase the virtual memory map count
-      #- "max_map_count=262144"
-
-  ## If you wish to use Elasticsearch, comment out opensearch image above and
-  ## uncomment this block. Do the same in the composer.healthcheck.yaml file.
-  # Additionally, if you are performing the manual setup, you will need to
-  # update the bin/setup command to use the $ES_HOST variable as the value for
-  # the --elasticsearch-host argument passed to bin/magento setup:install.
-  #elasticsearch:
-  #  image: markoshust/magento-elasticsearch:8.13-0
-  #  ports:
-  #    - "9200:9200"
-  #    - "9300:9300"
-  #  env_file: env/elasticsearch.env
-  #  environment:
-  #    - "discovery.type=single-node"
-  #    ## Avoid test failures due to small disks
-  #    ## More info at https://github.com/markshust/docker-magento/issues/488
-  #    - "cluster.routing.allocation.disk.threshold_enabled=false"
-  #    - "index.blocks.read_only_allow_delete"
-  #    ## Uncomment to set custom heap size to avoid memory errors
-  #    #- "ES_JAVA_OPTS=-Xms1g -Xmx1g"
-  #    ## Uncomment to increase the virtual memory map count
-  #    #- "max_map_count=262144"
-  #    ## Uncomment the line below if ElasticSearch fails to start and stops after ~150 seconds with the error "container for service "elasticsearch" is unhealthy".
-  #    #- "xpack.security.enabled=false"
+      - discovery.type=single-node
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - index.blocks.read_only_allow_delete
+      - TZ=Europe/Andorra
 
   rabbitmq:
     image: markoshust/magento-rabbitmq:4.1-0
+    container_name: rabbitmq
     ports:
       - "15672:15672"
       - "5672:5672"
+      - "15671"
+      - "15691"
+      - "15692"
+      - "25672"
+      - "4369"
+      - "5671"
+      - "5672"
+    env_file: env/rabbitmq.env
+    environment:
+      - TZ=Europe/Andorra
     volumes:
       - rabbitmqdata:/var/lib/rabbitmq
-    env_file: env/rabbitmq.env
 
   mailcatcher:
     image: sj26/mailcatcher:v0.10.0
+    container_name: emailer
     ports:
       - "1080:1080"
+      - "1025"
+    environment:
+      - TZ=Europe/Andorra
 
-  ## Cloudflare tunnel support, uncomment to enable
-  #tunnel:
-  #  container_name: cloudflared-tunnel
-  #  image: cloudflare/cloudflared:latest
-  #  command: tunnel run
-  #  env_file: env/cloudflare.env
 
-  ## Blackfire support, uncomment to enable
-  #blackfire:
-  #  image: blackfire/blackfire:2
-  #  ports:
-  #    - "8307"
-  #  env_file: env/blackfire.env
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1
+    container_name: minio
+    restart: unless-stopped
+    # entrypoint: '/bin/sh -c "mkdir -p /data/archive /data/catalog /data/jobs /data/category && minio server --console-address :9001 /data"'
+    command: server /data --console-address ":9001"
+    env_file: env/minio.env
+    environment:
+      TZ: Europe/Andorra
+    volumes:
+      - /mnt/miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
 
 volumes:
-  appdata:
   dbdata:
   rabbitmqdata:
   sockdata:
-  ssldata:
+  # ssldata:
+  redisdata:
+  appdata:

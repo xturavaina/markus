@@ -1,7 +1,7 @@
 x-healthcheck-defaults: &healthcheck-defaults
-  interval: 5s
-  timeout: 5s
-  retries: 6
+  interval: 30s
+  timeout: 3s
+  retries: 3
 
 x-healthcheck-slow-start: &healthcheck-slow-start
   <<: *healthcheck-defaults
@@ -10,7 +10,7 @@ x-healthcheck-slow-start: &healthcheck-slow-start
 services:
   app:
     healthcheck:
-      test: "curl --fail 127.0.0.1:8000"
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8886/health_check.php >/dev/null || exit 1"]
       <<: *healthcheck-defaults
     depends_on:
       phpfpm:

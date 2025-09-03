@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-[ -z "$1" ] && echo "Please specify a CLI command (ex. ls)" && exit
-# -T: Disable pseudo-tty allocation
-bin/docker-compose exec -T phpfpm "$@"
+set -euo pipefail
+[ $# -eq 0 ] && { echo "Please specify a CLI command (ex. ls)"; exit 1; }
+cmd="$*"
+bin/docker-compose exec -T -u app -w /var/www/html phpfpm bash -lc "$cmd"

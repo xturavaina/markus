@@ -1,36 +1,38 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 EDITION=${1:-community}
+VERSION=${2:-2.4.8-p2}   # posa el que vulguis per defecte
 
-# Define ANSI escape codes for colors
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-if [ -d "./src" ]; then
-  echo "Error: The \"src\" directory is not empty. Please remove all contents within this directory and try again."
+# crea src si no existeix
+mkdir -p ./src
+
+# ❗️només para si src NO està buida
+if [ -d "./src" ] && [ "$(ls -A ./src)" ]; then
+  echo 'Error: The "src" directory is not empty. Please remove all contents within this directory and try again.'
   exit 1
 fi
 
 bin/stop
-
 bin/start --no-dev
-[ $? != 0 ] && echo "Failed to start Docker services" && exit
+[ $? != 0 ] && echo "Failed to start Docker services" && exit 1
 
 bin/setup-composer-auth
-
 bin/fixowns
 
-if [ "$EDITION" == "mageos" ]; then
-  VERSION=${2:-1.0.5}
-  bin/clinotty composer create-project --repository-url=https://repo.mage-os.org/ mage-os/project-community-edition="${VERSION}" .
+if [ "$EDITION" = "mageos" ]; then
+  MVER=${VERSION:-1.0.5}
+  bin/clinotty composer create-project --repository-url=https://repo.mage-os.org/ mage-os/project-community-edition="${MVER}" .
 else
-  VERSION=${2:-2.4.7-p3}
   bin/clinotty composer create-project --repository=https://repo.magento.com/ magento/project-"${EDITION}"-edition="${VERSION}" .
 fi
 
-if [ $? != 0 ]; then
-    echo -e "${BLUE}Please check the installation guide at ${YELLOW}https://github.com/markshust/docker-magento#install-fails-because-project-directory-is-not-empty${BLUE} for troubleshooting.${NC}"
-else
-    bin/clinotty [ ! -f "./var/composer_home/auth.json" ] && bin/clinotty mkdir -p ./var/composer_home && bin/clinotty cp /var/www/.composer/auth.json ./var/composer_home/auth.json
-fi
+# comprova que existeix
+bin/clinotty 'test -f bin/magento'
+
+# copia auth.json al lloc on després el busca l’stack (opcional)
+bin/clinotty 'test -f ./var/composer_home/auth.json || { mkdir -p ./var/composer_home && cp /var/www/.composer/auth.json ./var/composer_home/auth.json; }' || true
