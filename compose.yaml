@@ -43,6 +43,34 @@ services:
       - opensearch
       - rabbitmq
 
+  supervisor:
+    image: nacento/supervisor-php8.3-fpm:0.2-experimental
+    container_name: supervisor
+    ports:
+      - "9000"
+    env_file: env/phpfpm.env
+    volumes:
+      - appdata:/var/www
+      - ./src:/var/www/html:cached
+      - ~/.ssh/id_rsa:/var/www/.ssh/id_rsa:cached
+      - ~/.ssh/known_hosts:/var/www/.ssh/known_hosts:cached
+      - ./mountConf/supervisor/conf.d/cron.conf:/etc/supervisor/conf.d/cron.conf:ro
+      - sockdata:/sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      CONSUMERS: >
+        async.operations.all,
+        product_action_attribute.update,
+        product_action_attribute.website.update
+      PHP_MEMORY_LIMIT: 1024M
+      MAX_MESSAGES: 500
+      RUN_AS_USER: app
+      WORKDIR: /var/www/html
+      TZ: Europe/Andorra
+    depends_on:
+      - phpfpm
+
   db:
     image: mariadb:11.4
     container_name: mariadb
@@ -58,40 +86,6 @@ services:
       - TZ=Europe/Andorra
     volumes:
       - dbdata:/var/lib/mysql
-
-
-  consumer:
-    image: nacento/magento-consumers:0.1-experimental
-    container_name: supervisord
-    ports:
-      - "9000"
-    depends_on:
-      - phpfpm
-      - rabbitmq
-      - opensearch
-    # working_dir: /var/www/html
-    volumes:
-      - appdata:/var/www
-      - ./mountConf/supervisor/conf.d/magento-consumers.conf:/etc/supervisor/conf.d/magento-consumers.conf:cached
-      # - ./mountConf/supervisor/supervisord.conf:/etc/supervisor/supervisord.conf:cached
-      - ./src:/var/www/html:cached
-      - ~/.composer:/var/www/.composer:cached
-      - ~/.ssh/id_rsa:/var/www/.ssh/id_rsa:cached
-      - ~/.ssh/known_hosts:/var/www/.ssh/known_hosts:cached
-      - sockdata:/sock
-    env_file: env/phpfpm.env
-    environment:
-      - TZ=Europe/Andorra
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-      # - XDEBUG_MODE=debug
-    # extra_hosts: *appextrahosts
-    # configs:
-    #   - source: php_xdebug_ini
-    #     target: /usr/local/etc/php/conf.d/99-xdebug.ini
-    #     mode: 0444
-
-
 
   redis:
     image: valkey/valkey:8.1-alpine
@@ -119,7 +113,7 @@ services:
       - TZ=Europe/Andorra
 
   rabbitmq:
-    image: markoshust/magento-rabbitmq:4.1-0
+    image: rabbitmq:4.1-management-alpine
     container_name: rabbitmq
     ports:
       - "15672:15672"
@@ -134,6 +128,7 @@ services:
     env_file: env/rabbitmq.env
     environment:
       - TZ=Europe/Andorra
+      - RABBITMQ_NODENAME=rabbit@rabbitmq
     volumes:
       - rabbitmqdata:/var/lib/rabbitmq
 
@@ -145,7 +140,6 @@ services:
       - "1025"
     environment:
       - TZ=Europe/Andorra
-
 
   minio:
     image: minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1
@@ -161,7 +155,6 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
-
 
 volumes:
   dbdata:
